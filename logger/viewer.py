@@ -8,14 +8,14 @@ Requirements:
 """
 
 import sys
-import sqlite3
-from contextlib import closing
 from datetime import timedelta
 from pathlib import Path
 
 if __package__:
+    from . import viewer_data
     from .viewer_window import configure_viewer_window
 else:
+    import viewer_data
     from viewer_window import configure_viewer_window
 
 try:
@@ -25,7 +25,6 @@ try:
     import matplotlib.patches as mpatches
     from matplotlib.ticker import AutoLocator, FixedLocator, MultipleLocator
     from matplotlib.patches import FancyBboxPatch
-    import matplotlib.animation as animation
     from matplotlib.widgets import Button
 except ImportError:
     print("Missing dependencies. Run:  pip install matplotlib pandas")
@@ -119,51 +118,7 @@ RANGE_PLUS_X = 0.96
 # ---------------------------------------------------------------------------
 
 def load_data() -> pd.DataFrame:
-    if DB_FILE.exists():
-        with closing(sqlite3.connect(DB_FILE, timeout=10)) as db:
-            columns = {row[1] for row in db.execute("PRAGMA table_info(measurements)")}
-            optional_columns = ",".join(
-                name if name in columns else f"NULL AS {name}"
-                for name in ("humidity_scd_rh", "humidity_offset_rh"))
-            df = pd.read_sql_query(
-                f"""SELECT COALESCE(device_time,received_at) AS timestamp,
-                   co2_ppm,temp_box_c,humidity_rh,temp_outer_c,{optional_columns}
-                   FROM measurements
-                   ORDER BY id""", db)
-    else:
-        df = pd.read_csv(CSV_FILE,
-                         usecols=lambda name: name in {"timestamp", "co2_ppm", "temp_box_c",
-                                                      "humidity_rh", "temp_outer_c", "humidity_scd_rh", "humidity_offset_rh"},
-                         on_bad_lines="skip")
-    # Legacy CSV rows contain local timestamps without an offset. New rows are
-    # ISO-8601 timestamps with an offset. Preserve the legacy wall-clock time
-    # and convert offset timestamps to Zurich wall-clock time before sorting.
-    raw_timestamp = df["timestamp"].astype("string")
-    has_offset = raw_timestamp.str.contains(r"(?:Z|[+-]\d{2}:\d{2})$", na=False)
-    timestamp = pd.Series(pd.NaT, index=df.index, dtype="datetime64[ns]")
-    timestamp.loc[~has_offset] = pd.to_datetime(
-        raw_timestamp.loc[~has_offset], format="mixed", errors="coerce"
-    )
-    timestamp.loc[has_offset] = (
-        pd.to_datetime(raw_timestamp.loc[has_offset], format="mixed", errors="coerce", utc=True)
-        .dt.tz_convert("Europe/Zurich")
-        .dt.tz_localize(None)
-    )
-    df["timestamp"] = timestamp
-    df.dropna(subset=["timestamp"], inplace=True)
-    if "temp_outer_c" not in df.columns:
-        df["temp_outer_c"] = float("nan")
-    df["temp_outer_c"] = pd.to_numeric(df["temp_outer_c"], errors="coerce")
-    for column in ("humidity_scd_rh", "humidity_offset_rh"):
-        if column not in df.columns:
-            df[column] = float("nan")
-        df[column] = pd.to_numeric(df[column], errors="coerce")
-    df["humidity_corrected_rh"] = (
-        pd.to_numeric(df["humidity_rh"], errors="coerce")
-        + df["humidity_offset_rh"].fillna(0)
-    ).clip(0, 100)
-    df.sort_values("timestamp", inplace=True)
-    return df
+    return viewer_data.load_data(DB_FILE, CSV_FILE)
 
 
 def filter_data(df: pd.DataFrame) -> pd.DataFrame:
@@ -188,7 +143,6 @@ def format_xaxis(ax: "plt.Axes", df: pd.DataFrame) -> None:
         return dt.strftime("%H:%M")
 
     def _bold_midnight():
-        ax.get_figure().canvas.draw()
         for label in ax.get_xticklabels():
             if "\n" in label.get_text():
                 label.set_fontweight("bold")
@@ -536,15 +490,19 @@ def range_index_for_click(x_position: float) -> int:
 
 def draw(fig: "plt.Figure", box_axes: list, chart_axes: list,
          range_axis: "plt.Axes", footer_text: "plt.Text",
-         preserve_view: bool = False) -> None:
+         preserve_view: bool = False, data_cache=None,
+         skip_unchanged: bool = False) -> None:
     preserved_x_limits = (
         [axis.get_xlim() for axis in chart_axes] if preserve_view else None
     )
 
     try:
-        df_all = load_data()
+        previous_revision = data_cache.revision if data_cache else None
+        df_all = data_cache.load(DB_FILE, CSV_FILE) if data_cache else load_data()
+        if skip_unchanged and data_cache and data_cache.revision == previous_revision:
+            return
     except Exception as exc:
-        print(f"Could not read CSV: {exc}", file=sys.stderr)
+        print(f"Could not read measurements: {exc}", file=sys.stderr)
         return
 
     df = filter_data(df_all)
@@ -584,6 +542,7 @@ def main() -> None:
         print("Start logger.py first to collect measurements.")
         sys.exit(1)
 
+    data_cache = viewer_data.MeasurementCache()
     fig = plt.figure(figsize=(11, 8.5))
     fig.patch.set_facecolor(current_theme()["page"])
     window_controls = configure_viewer_window(fig)
@@ -633,7 +592,7 @@ def main() -> None:
         fontsize=8, color=current_theme()["muted"], fontfamily="monospace",
     )
 
-    draw(fig, box_axes, chart_axes, range_axis, footer_text)
+    draw(fig, box_axes, chart_axes, range_axis, footer_text, data_cache=data_cache)
 
     # Minus/plus step through the ranges; labels and markers select directly.
     def _on_click(event):
@@ -641,7 +600,7 @@ def main() -> None:
             idx = range_index_for_click(event.xdata)
             _state["range"] = RANGES[idx][0]
             _state["manual_view"] = False
-            draw(fig, box_axes, chart_axes, range_axis, footer_text)
+            draw(fig, box_axes, chart_axes, range_axis, footer_text, data_cache=data_cache)
 
     fig.canvas.mpl_connect("button_press_event", _on_click)
 
@@ -663,7 +622,7 @@ def main() -> None:
         limits = [(axis.get_xlim(), axis.get_ylim()) for axis in chart_axes]
         draw(
             fig, box_axes, chart_axes, range_axis, footer_text,
-            preserve_view=_state["manual_view"],
+            preserve_view=_state["manual_view"], data_cache=data_cache,
         )
         for axis, (x_limits, y_limits) in zip(chart_axes, limits):
             axis.set_xlim(x_limits)
@@ -736,15 +695,18 @@ def main() -> None:
             chart_axes,
             range_axis,
             footer_text,
-            preserve_view=_state["manual_view"],
+            preserve_view=_state["manual_view"], data_cache=data_cache, skip_unchanged=True,
         )
 
-    ani = animation.FuncAnimation(
-        fig, _update, interval=REFRESH_INTERVAL_MS, cache_frame_data=False
-    )
-    _ = ani
+    refresh_timer = fig.canvas.new_timer(interval=REFRESH_INTERVAL_MS)
+    refresh_timer.add_callback(_update, None)
+    refresh_timer.start()
 
-    plt.show()
+    try:
+        plt.show()
+    finally:
+        refresh_timer.stop()
+        data_cache.close()
 
 
 if __name__ == "__main__":

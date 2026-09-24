@@ -162,3 +162,11 @@ Skalierung bleiben erhalten.
 Der abgeschlossene Abkuehltest mit Firmware 2.0.11 (sechs Impulse im Abstand
 von 120 Sekunden, danach Heizer aus) ist unter
 [Heiztest vom 24.09.2026](docs/heater-test-2026-09-24/README.md) dokumentiert.
+
+## Viewer-Cache
+
+Der Viewer laedt die Historie einmal beim Start und danach nur neu angehaengte
+Datenbankzeilen. Ohne neue Daten wird die Ansicht nicht neu gezeichnet. Alle
+Messpunkte bleiben erhalten, einschliesslich einzelner Spitzen. CSV-Dateien
+werden nur nach einer Dateiaenderung neu geladen. Beim gleichzeitigen manuellen
+Aendern alter Zeilen und Anhaengen neuer Zeilen den Viewer neu starten.
