@@ -6,7 +6,7 @@ namespace Config {
 
 // Hardware mapping
 constexpr uint8_t SHT45_I2C_ADDRESS = 0x44;
-constexpr uint8_t RTD_OUTER_CHANNEL = 0;
+constexpr uint8_t RTD_OUTER_CHANNEL = 1;
 constexpr float RTD_REFERENCE_OHMS = 400.0f;
 constexpr float RTD_NOMINAL_OHMS = 100.0f;
 constexpr float RTD_MIN_TEMPERATURE_C = -100.0f;
@@ -55,6 +55,6 @@ constexpr bool SCD41_ASC_ENABLED = false;
 // QSPI append-only recovery buffer. The older file is retained across one rotation.
 constexpr size_t PERSISTENT_LOG_MAX_BYTES = 4U * 1024U * 1024U;
 constexpr size_t OTA_MAX_FILE_BYTES = 5U * 1024U * 1024U;
-constexpr const char* FIRMWARE_VERSION = "2.0.13";
+constexpr const char* FIRMWARE_VERSION = "2.0.15";
 
 }  // namespace Config

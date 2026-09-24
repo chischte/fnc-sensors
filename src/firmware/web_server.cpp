@@ -197,7 +197,11 @@ void WebServer::handleRequest() {
   }
 
   if (method == "GET" && path == "/api/measurement") {
-    startResponse(200, "application/json", buildApiJson());
+    startApiResponse();
+  } else if (method == "GET" && path == "/api/current") {
+    startResponse(200, "application/json", buildApiJson(false));
+  } else if (method == "GET" && path == "/api/backlog/current") {
+    startBacklog(true);
   } else if (method == "GET" && path == "/api/backlog") {
     startBacklog();
   } else if (method == "GET" && path == "/update") {
@@ -245,9 +249,9 @@ void WebServer::finishUpload() {
                 result.restartRequired);
 }
 
-String WebServer::buildApiJson() const {
+String WebServer::buildApiJson(bool includeHistory) const {
   String json;
-  json.reserve(300 + measurements_.historyCount() * 100);
+  json.reserve(2048);
   json += "{\"firmware\":\"";
   json += Config::FIRMWARE_VERSION;
   json += "\",\"sensor_ready\":";
@@ -257,15 +261,34 @@ String WebServer::buildApiJson() const {
   json += ",\"scd_errors\":" + String(measurements_.sensorErrorCount());
   json += ",\"measurement\":";
   appendMeasurementJson(json, measurements_.current(), measurements_.bootId());
-  json += ",\"history\":[";
-  for (size_t index = 0; index < measurements_.historyCount(); ++index) {
-    if (index) {
-      json += ',';
-    }
-    appendHistoryMeasurementJson(json, measurements_.historyAt(index));
-  }
-  json += "]}";
+  json += includeHistory ? ",\"history\":[" : "}";
   return json;
+}
+
+void WebServer::startApiResponse() {
+  // A bounded snapshot stays consistent while new sensor samples arrive.
+  apiHistoryCount_ = measurements_.historyCount();
+  for (size_t index = 0; index < apiHistoryCount_; ++index) {
+    apiHistory_[index] = measurements_.historyAt(index);
+  }
+  apiHistoryIndex_ = 0;
+  streamingApiHistory_ = true;
+  responseBody_ = buildApiJson(true);
+  responseOffset_ = 0;
+  sendResponseHeaders(200, "application/json", UNKNOWN_CONTENT_LENGTH);
+  clientState_ = ClientState::sendingResponse;
+}
+
+void WebServer::prepareNextHistoryChunk() {
+  responseBody_ = "";
+  responseOffset_ = 0;
+  if (apiHistoryIndex_ == apiHistoryCount_) {
+    responseBody_ = "]}";
+    streamingApiHistory_ = false;
+    return;
+  }
+  if (apiHistoryIndex_) responseBody_ += ',';
+  appendHistoryMeasurementJson(responseBody_, apiHistory_[apiHistoryIndex_++]);
 }
 
 String WebServer::headerValue(const char* name) const {
@@ -365,6 +388,11 @@ void WebServer::sendResponseChunk(uint32_t now) {
     return;
   }
 
+  if (streamingApiHistory_) {
+    prepareNextHistoryChunk();
+    return;
+  }
+
   const bool restart = restartAfterResponse_;
   closeClient();
   if (restart) {
@@ -372,9 +400,9 @@ void WebServer::sendResponseChunk(uint32_t now) {
   }
 }
 
-void WebServer::startBacklog() {
+void WebServer::startBacklog(bool currentOnly) {
   sendResponseHeaders(200, "application/x-ndjson", UNKNOWN_CONTENT_LENGTH);
-  backlogReader_.begin(storage_.isDataReady());
+  backlogReader_.begin(storage_.isDataReady(), currentOnly);
   streamBufferSize_ = 0;
   streamBufferOffset_ = 0;
   clientState_ = ClientState::streamingBacklog;
@@ -458,4 +486,5 @@ void WebServer::closeClient() {
   responseBody_ = "";
   responseOffset_ = 0;
   restartAfterResponse_ = false;
+  streamingApiHistory_ = false;
 }

@@ -4,7 +4,7 @@ Messsystem fuer eine Klimakammer auf dem Arduino Portenta Machine Control:
 
 - SHT45 fuer Inbox-Temperatur und relative Feuchte
 - SCD41 fuer CO2 und eine gepunktete Feuchte-Vergleichskurve
-- PT100 Kanal 0 fuer die Aussentemperatur
+- Ein PT100 an Kanal 1 (frueherer Inbox-Anschluss) fuer die Aussentemperatur
 - lokale Webseite und QSPI-Rueckpuffer
 - Python-Logger mit SQLite, CSV-Export, Viewer und Backup
 
@@ -128,9 +128,10 @@ Tests: python -m unittest discover -s test -p "test_*.py"
 
 ## Regulaerer Betrieb ab 2.0.13
 
-Der Inbox-PT100 (Kanal 1) wird nicht mehr abgefragt, aufgezeichnet oder angezeigt.
-Alte Datenbankspalten und historische Werte bleiben erhalten. Der Aussen-PT100
-(Kanal 0) bleibt aktiv.
+Es gibt keinen separaten Inbox-PT100 mehr. Alte Datenbankspalten und historische
+Werte bleiben erhalten. Ab Firmware 2.0.15 wird der einzige Aussen-PT100 an
+Kanal 1 (frueherer Inbox-Anschluss) gelesen; Kanal 0 wird nicht mehr abgefragt.
+Die Zuordnung als Aussentemperatur in API, Datenbank und Viewer bleibt bestehen.
 
 Die Aufzeichnung von CO2, SCD41-Feuchte und Aussen-PT100 erfolgt alle 5 Sekunden.
 Der SHT45 wird unabhaengig davon alle 65 Sekunden uebernommen. Zwischen diesen
@@ -170,3 +171,12 @@ Datenbankzeilen. Ohne neue Daten wird die Ansicht nicht neu gezeichnet. Alle
 Messpunkte bleiben erhalten, einschliesslich einzelner Spitzen. CSV-Dateien
 werden nur nach einer Dateiaenderung neu geladen. Beim gleichzeitigen manuellen
 Aendern alter Zeilen und Anhaengen neuer Zeilen den Viewer neu starten.
+
+## API ab 2.0.14
+
+Der Logger ruft `/api/current` ohne Verlauf ab. `/api/measurement` behaelt
+seinen bisherigen Inhalt, uebertraegt den Verlauf aber messpunktweise aus
+einem festen Snapshot. Dadurch wird kein riesiger JSON-String aufgebaut,
+der bei vollem Verlauf den Heap erschoepft und unvollstaendig zurueckkommt.
+`/api/backlog/current` liefert bei der Wiederherstellung gezielt die aktuelle
+QSPI-Datei; `/api/backlog` liefert wie bisher auch die vorherige Datei.

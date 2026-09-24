@@ -22,9 +22,9 @@ constexpr size_t BACKLOG_FILE_COUNT =
     sizeof(BACKLOG_PATHS) / sizeof(BACKLOG_PATHS[0]);
 }  // namespace
 
-bool BacklogReader::begin(bool storageReady) {
+bool BacklogReader::begin(bool storageReady, bool currentOnly) {
   close();
-  nextFileIndex_ = 0;
+  nextFileIndex_ = currentOnly ? BACKLOG_FILE_COUNT - 1 : 0;
   finished_ = !storageReady;
   return storageReady && openNextFile();
 }

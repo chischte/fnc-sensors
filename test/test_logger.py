@@ -2,6 +2,7 @@ import importlib.util
 import sqlite3
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 SPEC = importlib.util.spec_from_file_location("sensor_logger", Path(__file__).parents[1] / "logger" / "logger.py")
 logger = importlib.util.module_from_spec(SPEC)
@@ -12,6 +13,22 @@ class LoggerTests(unittest.TestCase):
         self.db = logger.connect(Path(self.temp.name) / "test.db")
     def tearDown(self):
         self.db.close(); self.temp.cleanup()
+    def test_live_logging_uses_current_without_fetching_history(self):
+        payload = {"measurement": {"boot_id": 30, "sequence": 1, "humidity": 94}}
+        with patch.object(logger, "connect", return_value=self.db), \
+                patch.object(logger, "import_csv", return_value=0), \
+                patch.object(logger, "fetch_backlog", return_value=iter(())), \
+                patch.object(logger, "fetch_json", side_effect=[payload, KeyboardInterrupt]) as fetch, \
+                patch.object(logger.time, "sleep"), \
+                patch.object(logger.sys, "argv", ["logger", "--url", "http://device"]), \
+                patch("builtins.print"):
+            with self.assertRaises(KeyboardInterrupt):
+                logger.main()
+        self.assertEqual(["http://device/api/current"] * 2,
+                         [call.args[0] for call in fetch.call_args_list])
+        self.assertEqual((94.0,), self.db.execute(
+            "SELECT humidity_rh FROM measurements WHERE boot_id=30").fetchone())
+
     def test_sequence_deduplication(self):
         row = {"boot_id": 7, "sequence": 1, "uptime_ms": 5000, "co2": 900,
                "boxtemp": 24.0, "humidity": 80.0, "outertemp": 20.0}

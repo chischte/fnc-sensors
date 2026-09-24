@@ -173,7 +173,7 @@ def main() -> None:
         while True:
             started = time.monotonic()
             try:
-                payload = fetch_json(args.url + "/api/measurement")
+                payload = fetch_json(args.url + "/api/current")
                 if insert(db, payload):
                     row = normalize(payload)
                     print(f"{row['received_at']}  #{row['sequence']}  CO2={row['co2_ppm']}  "

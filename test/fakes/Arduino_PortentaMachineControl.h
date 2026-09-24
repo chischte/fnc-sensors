@@ -3,8 +3,8 @@
 constexpr int THREE_WIRE = 1;
 struct FakeRtd {
   void begin(int) {}
-  bool boxSelected = false;
-  void selectChannel(uint8_t channel) { if (channel == 1) boxSelected = true; }
+  uint8_t selectedChannels = 0;
+  void selectChannel(uint8_t channel) { selectedChannels |= 1U << channel; }
   float readTemperature(float, float) { return 25.0f; }
   uint8_t readFault() { return 0; }
   void clearFault() {}

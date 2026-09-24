@@ -13,7 +13,7 @@ class MBRBlockDevice;
 
 class BacklogReader {
  public:
-  bool begin(bool storageReady);
+  bool begin(bool storageReady, bool currentOnly = false);
   size_t read(uint8_t* buffer, size_t capacity);
   bool isFinished() const;
   void close();

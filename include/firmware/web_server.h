@@ -37,7 +37,9 @@ class WebServer {
   void prepareUpload();
   void finishUpload();
 
-  String buildApiJson() const;
+  String buildApiJson(bool includeHistory) const;
+  void startApiResponse();
+  void prepareNextHistoryChunk();
   String headerValue(const char* name) const;
   String multipartBoundary(const String& contentType) const;
   bool parseContentLength(const String& value, size_t& result) const;
@@ -46,7 +48,7 @@ class WebServer {
   void startResponse(uint16_t status, const char* contentType,
                      const String& body, bool restartAfterResponse = false);
   void sendResponseChunk(uint32_t now);
-  void startBacklog();
+  void startBacklog(bool currentOnly = false);
   void sendBacklogChunk(uint32_t now);
   void sendResponseHeaders(uint16_t status, const char* contentType,
                            int contentLength);
@@ -67,6 +69,10 @@ class WebServer {
   String boundary_;
   String responseBody_;
   size_t responseOffset_ = 0;
+  Measurement apiHistory_[Config::HISTORY_SIZE];
+  size_t apiHistoryCount_ = 0;
+  size_t apiHistoryIndex_ = 0;
+  bool streamingApiHistory_ = false;
   size_t expectedBodyBytes_ = 0;
   size_t receivedBodyBytes_ = 0;
   uint8_t streamBuffer_[Config::HTTP_STREAM_BUFFER_BYTES] = {};

@@ -63,7 +63,7 @@ int main() {
   Measurement otherBus;
   sensor.read(otherBus, now + 6000);
   assert(otherBus.co2Valid && otherBus.scdSerialNumber == 3);
-  assert(!MachineControl_RTDTempProbe.boxSelected);
+  assert(MachineControl_RTDTempProbe.selectedChannels == (1U << 1));
 
   SensorManager combined;
   fakeSht = FakeSht{};
@@ -193,6 +193,6 @@ int main() {
     }
   }
   assert(shtUpdates == 10 && fastUpdates > 120);
-  assert(!MachineControl_RTDTempProbe.boxSelected);
+  assert(MachineControl_RTDTempProbe.selectedChannels == (1U << 1));
   return 0;
 }

@@ -1,0 +1,15 @@
+{
+  "boot_id": 2625736713,
+  "restored_count": 324,
+  "first": [
+    5608,
+    "2026-09-24T10:15:06+02:00"
+  ],
+  "last": [
+    5967,
+    "2026-09-24T10:45:10+02:00"
+  ],
+  "timestamp_method": "Last logged received_at plus device uptime difference; approximate original measurement times.",
+  "source": "Complete JSON objects from truncated API response; sequence numbers of history derived from 360-row firmware ring snapshot.",
+  "remaining_gap": "Flash download contains old boot IDs 1-4 only; the full outage cannot be reconstructed from currently accessible data."
+}
