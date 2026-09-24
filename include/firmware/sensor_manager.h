@@ -5,6 +5,7 @@
 #include <Wire.h>
 
 #include "firmware/measurement.h"
+#include "firmware/sht45_sensor.h"
 
 class SensorManager {
  public:
@@ -26,6 +27,7 @@ class SensorManager {
   void continueInitialization(uint32_t now);
   void finishInitialization(uint32_t now);
   void tryNextBus(uint32_t now);
+  void readSht(Measurement& measurement, uint32_t now);
   void readScd(Measurement& measurement, uint32_t now);
   void readRtd(uint8_t channel, float& value, bool& valid, uint8_t& fault);
   void compareRtdModes(Measurement& measurement);
@@ -33,6 +35,16 @@ class SensorManager {
   TwoWire& busForIndex(uint8_t busIndex);
   const char* busName(uint8_t busIndex) const;
 
+  struct ShtReading {
+    float temperature = NAN;
+    float humidity = NAN;
+    float offset = 0.0f;
+    int32_t heaterElapsedMs = -1;
+    uint32_t readAt = 0;
+    bool valid = false;
+  };
+  ShtReading shtReading_;
+  Sht45Sensor sht45_;
   SensirionI2cScd4x scd4x_;
   InitializationState initializationState_ = InitializationState::idle;
   uint32_t stateStartedAt_ = 0;

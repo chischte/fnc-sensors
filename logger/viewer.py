@@ -9,6 +9,7 @@ Requirements:
 
 import sys
 import sqlite3
+from contextlib import closing
 from datetime import timedelta
 from pathlib import Path
 
@@ -81,10 +82,12 @@ def current_theme() -> dict:
 
 
 SERIES = [
-    {"col": "humidity_rh", "label": "Humidity",    "unit": "%RH", "color": "#2878a8", "ymin": 85, "ymax": 100,   "step": 5,    "fmt": ".1f"},
+    {"col": "humidity_corrected_rh", "label": "Humidity",    "unit": "%RH", "color": "#2878a8", "ymin": 85, "ymax": 100,   "step": 5,    "fmt": ".1f",
+     "line_label": "SHT45", "overlay_col": "humidity_scd_rh",
+     "overlay_color": "#78a9c4", "overlay_label": "SCD41", "overlay_style": ":"},
     {"col": "co2_ppm",     "label": "CO2",        "unit": "ppm", "color": "#7b2cbf", "ymin": 0,  "ymax": 10000, "step": None, "fmt": ".0f"},
     {"col": "temp_box_c",  "label": "Temperature", "unit": "°C",  "color": "#d65a4a", "ymin": 20, "ymax": 30,    "step": 2,    "fmt": ".1f",
-     "ticks": [20, 22, 24, 26, 28, 30],
+     "line_label": "Inbox (SHT45)", "ticks": [20, 22, 24, 26, 28, 30],
      "overlay_col": "temp_outer_c", "overlay_color": "#e89489"},
 ]
 
@@ -117,18 +120,20 @@ RANGE_PLUS_X = 0.96
 
 def load_data() -> pd.DataFrame:
     if DB_FILE.exists():
-        with sqlite3.connect(DB_FILE, timeout=10) as db:
-            count = db.execute("SELECT COUNT(*) FROM measurements").fetchone()[0]
-            stride = max(1, count // 50_000)
+        with closing(sqlite3.connect(DB_FILE, timeout=10)) as db:
+            columns = {row[1] for row in db.execute("PRAGMA table_info(measurements)")}
+            optional_columns = ",".join(
+                name if name in columns else f"NULL AS {name}"
+                for name in ("humidity_scd_rh", "humidity_offset_rh"))
             df = pd.read_sql_query(
-                """SELECT COALESCE(device_time,received_at) AS timestamp,
-                   co2_ppm,temp_box_c,humidity_rh,temp_outer_c
+                f"""SELECT COALESCE(device_time,received_at) AS timestamp,
+                   co2_ppm,temp_box_c,humidity_rh,temp_outer_c,{optional_columns}
                    FROM measurements
-                   WHERE id % ? = 0 OR id = (SELECT MAX(id) FROM measurements)
-                   ORDER BY id""", db, params=(stride,))
+                   ORDER BY id""", db)
     else:
         df = pd.read_csv(CSV_FILE,
-                         usecols=["timestamp","co2_ppm","temp_box_c","humidity_rh","temp_outer_c"],
+                         usecols=lambda name: name in {"timestamp", "co2_ppm", "temp_box_c",
+                                                      "humidity_rh", "temp_outer_c", "humidity_scd_rh", "humidity_offset_rh"},
                          on_bad_lines="skip")
     # Legacy CSV rows contain local timestamps without an offset. New rows are
     # ISO-8601 timestamps with an offset. Preserve the legacy wall-clock time
@@ -149,6 +154,14 @@ def load_data() -> pd.DataFrame:
     if "temp_outer_c" not in df.columns:
         df["temp_outer_c"] = float("nan")
     df["temp_outer_c"] = pd.to_numeric(df["temp_outer_c"], errors="coerce")
+    for column in ("humidity_scd_rh", "humidity_offset_rh"):
+        if column not in df.columns:
+            df[column] = float("nan")
+        df[column] = pd.to_numeric(df[column], errors="coerce")
+    df["humidity_corrected_rh"] = (
+        pd.to_numeric(df["humidity_rh"], errors="coerce")
+        + df["humidity_offset_rh"].fillna(0)
+    ).clip(0, 100)
     df.sort_values("timestamp", inplace=True)
     return df
 
@@ -343,19 +356,23 @@ def plot_series(ax: "plt.Axes", df: pd.DataFrame, s: dict) -> None:
     ax.fill_between(df["timestamp"], df[col], s["ymin"],
                     color=s["color"], alpha=0.12, zorder=2)
     ax.plot(df["timestamp"], df[col], color=s["color"], linewidth=1.5, zorder=3,
-            label="Box")
+            label=s.get("line_label", "Box"))
 
-    # Optional second line (e.g. RTD ambient temperature)
-    overlay_col = s.get("overlay_col")
-    if overlay_col and overlay_col in df.columns:
-        valid = df[overlay_col].notna() & (df[overlay_col] != 0)
-        if valid.any():
-            ax.plot(df["timestamp"][valid], df[overlay_col][valid],
-                    color=s["overlay_color"], linewidth=1.2, linestyle="--",
-                    zorder=4, label="Ambient")
-            ax.legend(fontsize=7, loc="upper left", framealpha=0.7,
-                      facecolor=theme["card"], edgecolor=theme["grid"],
-                      labelcolor=theme["text"])
+    overlays = list(s.get("extra_overlays", []))
+    if s.get("overlay_col"):
+        overlays.insert(0, {"col": s["overlay_col"], "color": s["overlay_color"],
+                            "style": s.get("overlay_style", "--"),
+                            "label": s.get("overlay_label", "Ambient (PT100)")})
+    for overlay in overlays:
+        if overlay["col"] not in df.columns:
+            continue
+        ax.plot(df["timestamp"], df[overlay["col"]], color=overlay["color"],
+                linewidth=1.2, linestyle=overlay["style"], zorder=4,
+                label=overlay["label"])
+    if overlays:
+        ax.legend(fontsize=7, loc="upper left", framealpha=0.7,
+                  facecolor=theme["card"], edgecolor=theme["grid"],
+                  labelcolor=theme["text"])
 
     ax.set_title(f'{s["label"]} [{s["unit"]}]', fontsize=10, fontweight="bold",
                  color=theme["text"], pad=6)
@@ -399,9 +416,9 @@ def draw_value_boxes(box_axes: list, last: pd.Series) -> None:
         overlay_col = s.get("overlay_col")
         has_delta = False
         delta_str = ""
-        if overlay_col and overlay_col in last.index:
+        if s["col"] == "temp_box_c" and overlay_col in last.index:
             rtd_val = last[overlay_col]
-            if pd.notna(rtd_val) and rtd_val != 0:
+            if pd.notna(rtd_val) and pd.notna(val):
                 delta = val - rtd_val
                 sign = "+" if delta >= 0 else ""
                 delta_str = f"{sign}{delta:.1f}"

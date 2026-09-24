@@ -22,14 +22,15 @@ void printScdError(const char* operation, int16_t error) {
 
 void SensorManager::begin(uint32_t now) {
   MachineControl_RTDTempProbe.begin(THREE_WIRE);
-  Serial.print("RTD box=");
-  Serial.print(Config::RTD_BOX_CHANNEL);
-  Serial.print(" outer=");
+  sht45_.begin(now);
+  shtReading_.readAt = now - Config::SHT45_READ_INTERVAL_MS;
+  Serial.print("RTD outer=");
   Serial.println(Config::RTD_OUTER_CHANNEL);
   startInitialization(PRIMARY_I2C_BUS, now);
 }
 
 void SensorManager::poll(uint32_t now) {
+  sht45_.poll(now);
   if (ready_) {
     // A replacement can acknowledge I2C while still being in idle mode.
     if (hasElapsed(now, lastScdMeasurementAt_,
@@ -51,15 +52,32 @@ void SensorManager::poll(uint32_t now) {
 
 void SensorManager::read(Measurement& measurement, uint32_t now) {
   readScd(measurement, now);
-  readRtd(Config::RTD_BOX_CHANNEL, measurement.boxTemperature,
-          measurement.boxTemperatureValid, measurement.boxFault);
-  measurement.boxRaw = lastRtdRawCount();
-  measurement.boxDiagnostics = lastRtdDiagnostics();
+  readSht(measurement, now);
   readRtd(Config::RTD_OUTER_CHANNEL, measurement.outerTemperature,
           measurement.outerTemperatureValid, measurement.outerFault);
   measurement.outerRaw = lastRtdRawCount();
   measurement.outerDiagnostics = lastRtdDiagnostics();
   compareRtdModes(measurement);
+}
+
+void SensorManager::readSht(Measurement& measurement, uint32_t now) {
+  if (hasElapsed(now, shtReading_.readAt, Config::SHT45_READ_INTERVAL_MS)) {
+    shtReading_.readAt = now;
+    shtReading_.valid = sht45_.read(shtReading_.temperature, shtReading_.humidity, now);
+    shtReading_.heaterElapsedMs = shtReading_.valid ? sht45_.heaterElapsedMs() : -1;
+    const bool cooled = shtReading_.heaterElapsedMs >=
+        static_cast<int32_t>(Config::SHT45_HEATER_COOLDOWN_MS) &&
+        shtReading_.heaterElapsedMs < static_cast<int32_t>(Config::SHT45_HEATER_INTERVAL_MS);
+    shtReading_.offset = cooled ? Config::SHT45_HUMIDITY_OFFSET_RH : 0.0f;
+  }
+  // Keep the last scheduled reading during heating; preserve its original timestamp.
+  measurement.shtReadUptimeMs = shtReading_.readAt;
+  measurement.boxTemperature = shtReading_.temperature;
+  measurement.humidity = shtReading_.humidity;
+  measurement.boxTemperatureValid = shtReading_.valid;
+  measurement.humidityValid = shtReading_.valid;
+  measurement.humidityOffset = shtReading_.offset;
+  measurement.shtHeaterElapsedMs = shtReading_.heaterElapsedMs;
 }
 
 void SensorManager::compareRtdModes(Measurement& measurement) {
@@ -76,9 +94,6 @@ void SensorManager::compareRtdModes(Measurement& measurement) {
     setRtdFilter50Hz(false);
   }
   bool valid = false;
-  readRtd(Config::RTD_BOX_CHANNEL, measurement.boxComparisonTemperature,
-          valid, measurement.boxComparisonFault);
-  measurement.boxComparisonRaw = lastRtdRawCount();
   readRtd(Config::RTD_OUTER_CHANNEL, measurement.outerComparisonTemperature,
           valid, measurement.outerComparisonFault);
   measurement.outerComparisonRaw = lastRtdRawCount();
@@ -184,7 +199,7 @@ void SensorManager::readScd(Measurement& measurement, uint32_t now) {
   int16_t error = scd4x_.getDataReadyStatus(dataReady);
   if (!error && dataReady) {
     error = scd4x_.readMeasurement(measurement.co2, measurement.scdTemperature,
-                                   measurement.humidity);
+                                   measurement.scdHumidity);
   }
   if (error) {
     recordScdError("read", error, now);
@@ -198,9 +213,9 @@ void SensorManager::readScd(Measurement& measurement, uint32_t now) {
   lastScdMeasurementAt_ = now;
   measurement.scdSerialNumber = scdSerialNumber_;
   measurement.scdTemperatureOffset = scdTemperatureOffset_;
-  measurement.humidityValid = isfinite(measurement.humidity) &&
-                              measurement.humidity >= Config::HUMIDITY_MIN_RH &&
-                              measurement.humidity <= Config::HUMIDITY_MAX_RH;
+  measurement.scdHumidityValid = isfinite(measurement.scdHumidity) &&
+      measurement.scdHumidity >= Config::HUMIDITY_MIN_RH &&
+      measurement.scdHumidity <= Config::HUMIDITY_MAX_RH;
   errorCount_ = 0;
 }
 

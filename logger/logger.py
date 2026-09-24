@@ -16,7 +16,7 @@ CSV_FILE = BASE / "data" / "measurements.csv"
 DEFAULT_URL = os.getenv("SENSOR_URL", "http://192.168.31.168")
 POLL_INTERVAL = float(os.getenv("POLL_INTERVAL", "5"))
 RTD_DIAGNOSTIC_COLUMNS = (
-    "rtd_box_raw", "rtd_outer_raw", "rtd_box_config_before", "rtd_box_config_after",
+    "rtd_box_raw", "rtd_box_config_before", "rtd_box_config_after", "rtd_outer_raw",
     "rtd_outer_config_before", "rtd_outer_config_after", "rtd_config_recoveries",
 )
 
@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS measurements(
  co2_ppm INTEGER, temp_box_c REAL, humidity_rh REAL, temp_outer_c REAL,
  valid_co2 INTEGER NOT NULL, valid_box INTEGER NOT NULL,
  valid_humidity INTEGER NOT NULL, valid_outer INTEGER NOT NULL,
- rtd_box_fault INTEGER NOT NULL DEFAULT 0, rtd_outer_fault INTEGER NOT NULL DEFAULT 0,
+ rtd_outer_fault INTEGER NOT NULL DEFAULT 0,
  UNIQUE(boot_id, sequence));
 CREATE INDEX IF NOT EXISTS ix_measurements_received ON measurements(received_at);
 """
@@ -48,7 +48,12 @@ def connect(path: Path = DB_FILE) -> sqlite3.Connection:
 def _add_sensor_columns(db: sqlite3.Connection) -> None:
     columns = {row[1] for row in db.execute("PRAGMA table_info(measurements)")}
     additions = {"temp_scd_c": "REAL", "scd_temperature_offset_c": "REAL",
-                 "scd_serial": "TEXT"}
+                 "scd_serial": "TEXT", "humidity_scd_rh": "REAL",
+                 "valid_scd_humidity": "INTEGER",
+                 "temp_box_rtd_c": "REAL", "valid_box_rtd": "INTEGER",
+                 "rtd_box_fault": "INTEGER",
+                 "sht_heated": "INTEGER", "sht_cooling": "INTEGER",
+                 "humidity_offset_rh": "REAL", "sht_heater_elapsed_ms": "INTEGER", "sht_read_uptime_ms": "INTEGER"}
     additions.update({name: "INTEGER" for name in RTD_DIAGNOSTIC_COLUMNS})
     for name, column_type in additions.items():
         if name not in columns:
@@ -77,6 +82,16 @@ def normalize(payload: dict) -> dict:
         "uptime_ms": int(record.get("uptime_ms", 0)),
         "co2_ppm": record.get("co2"), "temp_box_c": record.get("boxtemp"),
         "humidity_rh": record.get("humidity"), "temp_outer_c": record.get("outertemp"),
+        "humidity_scd_rh": record.get("scd_humidity"),
+        "valid_scd_humidity": int(valid.get("scd_humidity", record.get("scd_humidity") is not None)),
+        "humidity_offset_rh": record.get("humidity_offset_rh", 0.0),
+        "sht_heater_elapsed_ms": record.get("sht_heater_elapsed_ms"),
+        "sht_read_uptime_ms": record.get("sht_read_uptime_ms"),
+        "sht_heated": record.get("sht_heated"),
+        "sht_cooling": record.get("sht_cooling"),
+        "temp_box_rtd_c": record.get("box_rtd_temp"),
+        "valid_box_rtd": None if "box_rtd_temp" not in record else int(valid.get("box_rtd_temp", record.get("box_rtd_temp") is not None)),
+        "rtd_box_fault": int(faults.get("rtd_box", 0)),
         "temp_scd_c": record.get("scdtemp"),
         "scd_temperature_offset_c": record.get("scd_offset"),
         "scd_serial": record.get("scd_serial"),
@@ -85,7 +100,6 @@ def normalize(payload: dict) -> dict:
         "valid_box": int(valid.get("boxtemp", record.get("boxtemp") is not None)),
         "valid_humidity": int(valid.get("humidity", record.get("humidity") is not None)),
         "valid_outer": int(valid.get("outertemp", record.get("outertemp") is not None)),
-        "rtd_box_fault": int(faults.get("rtd_box", 0)),
         "rtd_outer_fault": int(faults.get("rtd_outer", 0)),
     }
 
@@ -106,7 +120,14 @@ def import_csv(db: sqlite3.Connection, path: Path = CSV_FILE) -> int:
         for sequence, row in enumerate(csv.DictReader(file), 1):
             payload = {"boot_id": 0, "sequence": sequence, "uptime_ms": sequence * 5000,
                        "co2": _number(row.get("co2_ppm")), "boxtemp": _number(row.get("temp_box_c")),
-                       "humidity": _number(row.get("humidity_rh")), "outertemp": _number(row.get("temp_outer_c"))}
+                       "humidity": _number(row.get("humidity_rh")), "outertemp": _number(row.get("temp_outer_c")),
+                       "scd_humidity": _number(row.get("humidity_scd_rh")),
+                       "humidity_offset_rh": _number(row.get("humidity_offset_rh")),
+                       "sht_heater_elapsed_ms": _number(row.get("sht_heater_elapsed_ms")),
+                       "sht_read_uptime_ms": _number(row.get("sht_read_uptime_ms")),
+                       "sht_heated": _number(row.get("sht_heated")),
+                       "sht_cooling": _number(row.get("sht_cooling")),
+                       "box_rtd_temp": _number(row.get("temp_box_rtd_c"))}
             if insert(db, payload):
                 db.execute("UPDATE measurements SET received_at=?, device_time=? WHERE boot_id=0 AND sequence=?",
                            (row["timestamp"], row["timestamp"], sequence))
@@ -125,9 +146,11 @@ def export_csv(db: sqlite3.Connection, path: Path = CSV_FILE) -> None:
     with temp.open("w", newline="", encoding="utf-8") as file:
         writer = csv.writer(file)
         writer.writerow(["timestamp", "co2_ppm", "temp_box_c", "humidity_rh", "temp_outer_c",
-                         "boot_id", "sequence", "valid_co2", "valid_box", "valid_humidity", "valid_outer"])
+                         "boot_id", "sequence", "valid_co2", "valid_box", "valid_humidity", "valid_outer",
+                         "humidity_scd_rh", "valid_scd_humidity", "sht_heated", "sht_cooling", "temp_box_rtd_c", "valid_box_rtd", "humidity_offset_rh", "sht_heater_elapsed_ms", "sht_read_uptime_ms"])
         writer.writerows(db.execute("""SELECT COALESCE(device_time,received_at),co2_ppm,temp_box_c,humidity_rh,temp_outer_c,
-            boot_id,sequence,valid_co2,valid_box,valid_humidity,valid_outer FROM measurements ORDER BY id"""))
+            boot_id,sequence,valid_co2,valid_box,valid_humidity,valid_outer,
+            humidity_scd_rh,valid_scd_humidity,sht_heated,sht_cooling,temp_box_rtd_c,valid_box_rtd,humidity_offset_rh,sht_heater_elapsed_ms,sht_read_uptime_ms FROM measurements ORDER BY id"""))
     temp.replace(path)
 
 def main() -> None:

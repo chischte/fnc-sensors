@@ -8,6 +8,20 @@ String nullableNumber(float value, bool valid) {
 const char* booleanJson(bool value) {
   return value ? "true" : "false";
 }
+void appendHumidityJson(String& json, const Measurement& measurement) {
+  json += ",\"sht_read_uptime_ms\":" + String(measurement.shtReadUptimeMs);
+  json += ",\"humidity\":" +
+          nullableNumber(measurement.humidity, measurement.humidityValid);
+  json += ",\"humidity_offset_rh\":" + String(measurement.humidityOffset, 2);
+  json += ",\"humidity_corrected\":" + nullableNumber(
+      min(100.0f, measurement.humidity + measurement.humidityOffset),
+      measurement.humidityValid);
+  json += ",\"sht_heater_elapsed_ms\":";
+  json += measurement.shtHeaterElapsedMs >= 0
+      ? String(measurement.shtHeaterElapsedMs) : String("null");
+  json += ",\"sht_heated\":" + String(booleanJson(measurement.shtHeated));
+  json += ",\"sht_cooling\":" + String(booleanJson(measurement.shtCooling));
+}
 }  // namespace
 
 void appendMeasurementJson(String& json, const Measurement& measurement,
@@ -20,8 +34,9 @@ void appendMeasurementJson(String& json, const Measurement& measurement,
   json += ",\"boxtemp\":" +
           nullableNumber(measurement.boxTemperature,
                          measurement.boxTemperatureValid);
-  json += ",\"humidity\":" +
-          nullableNumber(measurement.humidity, measurement.humidityValid);
+  appendHumidityJson(json, measurement);
+  json += ",\"scd_humidity\":" +
+          nullableNumber(measurement.scdHumidity, measurement.scdHumidityValid);
   json += ",\"outertemp\":" +
           nullableNumber(measurement.outerTemperature,
                          measurement.outerTemperatureValid);
@@ -39,22 +54,15 @@ void appendMeasurementJson(String& json, const Measurement& measurement,
   } else {
     json += "null";
   }
-  json += ",\"rtd_box_raw\":" + String(measurement.boxRaw);
   json += ",\"rtd_outer_raw\":" + String(measurement.outerRaw);
-  json += ",\"rtd_box_config_before\":" + String(measurement.boxDiagnostics.configBefore);
-  json += ",\"rtd_box_config_after\":" + String(measurement.boxDiagnostics.configAfter);
   json += ",\"rtd_outer_config_before\":" + String(measurement.outerDiagnostics.configBefore);
   json += ",\"rtd_outer_config_after\":" + String(measurement.outerDiagnostics.configAfter);
   json += ",\"rtd_config_recoveries\":" + String(measurement.outerDiagnostics.recoveries);
   if (measurement.rtdComparison) {
     const String suffix = measurement.rtdComparisonTwoWire ? "_2wire" : "_60hz";
-    json += ",\"rtd_comparison\":{\"box" + suffix + "\":" +
-        nullableNumber(measurement.boxComparisonTemperature, !measurement.boxComparisonFault);
-    json += ",\"outer" + suffix + "\":" +
+    json += ",\"rtd_comparison\":{\"outer" + suffix + "\":" +
         nullableNumber(measurement.outerComparisonTemperature, !measurement.outerComparisonFault);
-    json += ",\"box_raw" + suffix + "\":" + String(measurement.boxComparisonRaw);
     json += ",\"outer_raw" + suffix + "\":" + String(measurement.outerComparisonRaw);
-    json += ",\"box_fault" + suffix + "\":" + String(measurement.boxComparisonFault);
     json += ",\"outer_fault" + suffix + "\":" + String(measurement.outerComparisonFault) + "}";
   }
   json += ",\"valid\":{\"co2\":";
@@ -63,10 +71,11 @@ void appendMeasurementJson(String& json, const Measurement& measurement,
   json += booleanJson(measurement.boxTemperatureValid);
   json += ",\"humidity\":";
   json += booleanJson(measurement.humidityValid);
+  json += ",\"scd_humidity\":";
+  json += booleanJson(measurement.scdHumidityValid);
   json += ",\"outertemp\":";
   json += booleanJson(measurement.outerTemperatureValid);
-  json += "},\"faults\":{\"rtd_box\":" + String(measurement.boxFault);
-  json += ",\"rtd_outer\":" + String(measurement.outerFault) + "}}";
+  json += "},\"faults\":{\"rtd_outer\":" + String(measurement.outerFault) + "}}";
 }
 
 void appendHistoryMeasurementJson(String& json,
@@ -77,8 +86,9 @@ void appendHistoryMeasurementJson(String& json,
   json += ",\"boxtemp\":" +
           nullableNumber(measurement.boxTemperature,
                          measurement.boxTemperatureValid);
-  json += ",\"humidity\":" +
-          nullableNumber(measurement.humidity, measurement.humidityValid);
+  appendHumidityJson(json, measurement);
+  json += ",\"scd_humidity\":" +
+          nullableNumber(measurement.scdHumidity, measurement.scdHumidityValid);
   json += ",\"outertemp\":" +
           nullableNumber(measurement.outerTemperature,
                          measurement.outerTemperatureValid);
