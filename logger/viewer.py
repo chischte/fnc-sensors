@@ -84,7 +84,8 @@ SERIES = [
     {"col": "humidity_corrected_rh", "label": "Humidity",    "unit": "%RH", "color": "#2878a8", "ymin": 85, "ymax": 100,   "step": 5,    "fmt": ".1f",
      "line_label": "SHT45", "overlay_col": "humidity_scd_rh",
      "overlay_color": "#78a9c4", "overlay_label": "SCD41", "overlay_style": ":"},
-    {"col": "co2_ppm",     "label": "CO2",        "unit": "ppm", "color": "#7b2cbf", "ymin": 0,  "ymax": 10000, "step": None, "fmt": ".0f"},
+    {"col": "co2_ppm",     "label": "CO2",        "unit": "ppm", "color": "#7b2cbf", "ymin": 0,  "ymax": 15000, "step": None, "fmt": ".0f",
+     "line_label": "SCD41"},
     {"col": "temp_box_c",  "label": "Temperature", "unit": "°C",  "color": "#d65a4a", "ymin": 20, "ymax": 30,    "step": 2,    "fmt": ".1f",
      "line_label": "Inbox (SHT45)", "ticks": [20, 22, 24, 26, 28, 30],
      "overlay_col": "temp_outer_c", "overlay_color": "#e89489"},
@@ -323,7 +324,7 @@ def plot_series(ax: "plt.Axes", df: pd.DataFrame, s: dict) -> None:
         ax.plot(df["timestamp"], df[overlay["col"]], color=overlay["color"],
                 linewidth=1.2, linestyle=overlay["style"], zorder=4,
                 label=overlay["label"])
-    if overlays:
+    if overlays or s.get("line_label"):
         ax.legend(fontsize=7, loc="upper left", framealpha=0.7,
                   facecolor=theme["card"], edgecolor=theme["grid"],
                   labelcolor=theme["text"])

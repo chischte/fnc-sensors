@@ -86,12 +86,13 @@ body{font-family:system-ui,sans-serif;max-width:1000px;margin:0 auto;padding:20p
 h2{margin:0 0 10px;font-size:1rem;color:#2a3630;text-align:center}.values{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.value,section{background:white;border:1px solid #d9e2dc;border-radius:8px;padding:16px;box-shadow:0 2px 8px #173b2412}.value{text-align:center}.value strong{display:block;font-size:2rem;margin-top:8px}.unit{color:#607068}.delta{display:inline-block;font-size:1rem;color:#7bafd4;margin-left:8px;vertical-align:middle;position:absolute;left:62%;top:50%;transform:translateY(-50%)}.value{position:relative}section{margin-top:16px}canvas{width:100%;height:220px;display:block}@media(max-width:650px){.values{grid-template-columns:1fr}.value strong{font-size:1.7rem}}
 #humidity{color:#2878a8}#co2{color:#7b2cbf}#boxtemp{color:#d65a4a}
 .legend{display:flex;justify-content:center;gap:20px;font-size:12px;margin-bottom:8px}.legend span{display:inline-flex;align-items:center;gap:6px}.legend i{display:inline-block;width:30px;border-top:2px solid #2878a8}.legend .inbox{border-color:#d65a4a}.legend .ambient{border-top:2px dashed #e89489}.legend .scd{border-top:3px dotted #78a9c4}
+.legend .co2{border-color:#7b2cbf}
 #status-footer{text-align:center;margin:22px 0 2px;color:#607068;font:12px ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.06em}
 </style></head><body>
 <div class="values">
-  <div class="value">Inbox humidity (SHT45)<strong id="humidity">--</strong><span class="unit">%RH</span></div>
+  <div class="value">Humidity<strong id="humidity">--</strong><span class="unit">%RH</span></div>
   <div class="value">CO2<strong id="co2">--</strong><span class="unit">ppm</span></div>
-  <div class="value">Inbox temperature (SHT45)
+  <div class="value">Temperature
     <div style="position:relative;text-align:center;margin-top:8px;margin-bottom:4px">
       <strong id="boxtemp" style="font-size:2rem">--</strong>
       <span id="tempdelta" style="position:absolute;font-size:1rem;color:#e89489;font-weight:600;left:calc(50% + 2.2rem);top:50%;transform:translateY(-50%)"></span>
@@ -100,15 +101,18 @@ h2{margin:0 0 10px;font-size:1rem;color:#2a3630;text-align:center}.values{displa
   </div>
 </div>
 <section><h2>Humidity</h2><div class="legend" aria-label="Feuchte-Sensoren"><span><i></i>SHT45</span><span><i class="scd"></i>SCD41</span></div><canvas id="chart-humidity" width="900" height="220"></canvas></section>
-<section><h2>CO2</h2><canvas id="chart-co2" width="900" height="220"></canvas></section>
+<section><h2>CO2</h2><div class="legend" aria-label="CO2-Sensor"><span><i class="co2"></i>SCD41</span></div><canvas id="chart-co2" width="900" height="220"></canvas></section>
 <section><h2>Temperature</h2><div class="legend"><span><i class="inbox"></i>Inbox (SHT45)</span><span><i class="ambient"></i>Ambient (PT100)</span></div><canvas id="chart-temperature" width="900" height="220"></canvas></section>
 <footer id="status-footer">Last Reading: -- &nbsp; | &nbsp; -- data points</footer>
 <script>
 const series=[
   {id:'chart-humidity',key:'humidity_corrected',color:'#2878a8',min:85,max:100,unit:'%RH',step:5,overlay:'scd_humidity',overlayColor:'#78a9c4',overlayDash:[1,4]},
-  {id:'chart-co2',key:'co2',color:'#7b2cbf',min:0,max:10000,unit:'ppm'},
+  {id:'chart-co2',key:'co2',color:'#7b2cbf',min:0,max:15000,unit:'ppm',step:2500},
   {id:'chart-temperature',key:'boxtemp',color:'#d65a4a',min:20,max:35,unit:'°C',step:5,overlay:'outertemp',overlayColor:'#e89489'}
 ];
+const HISTORY_WINDOW_MINUTES=30;
+const HISTORY_WINDOW_MS=HISTORY_WINDOW_MINUTES*60*1000;
+const TIME_TICK_MINUTES=5;
 
 function drawSeries(canvasId, history, cfg){
   const c=document.getElementById(canvasId),ctx=c.getContext('2d'),w=c.width,h=c.height;
@@ -116,6 +120,7 @@ function drawSeries(canvasId, history, cfg){
   const pw=w-left-right,ph=h-top-bottom;
   ctx.clearRect(0,0,w,h);
   if(!history.length){return;}
+  const latestTime=Number(history[history.length-1].uptime_ms);
 
   const ticks=cfg.step
     ? Array.from({length:Math.floor((cfg.max-cfg.min)/cfg.step)+1},(_,i)=>cfg.max-(i*cfg.step))
@@ -153,13 +158,15 @@ function drawSeries(canvasId, history, cfg){
     ctx.setLineDash(dash);
     ctx.lineCap=dash.length?'round':'butt';
     ctx.beginPath();
-    const firstTime=Number(history[0].uptime_ms||0),lastTime=Number(history[history.length-1].uptime_ms||0);
     let connected=false;
     values.forEach((v,i)=>{
       if(!Number.isFinite(v)){connected=false;return;}
       const clamped=Math.max(cfg.min,Math.min(cfg.max,v));
-      const sampleTime=Number(history[i].uptime_ms||0);
-      const px=left+(lastTime>firstTime?(sampleTime-firstTime)*pw/(lastTime-firstTime):i*pw/Math.max(1,values.length-1));
+      const sampleTime=Number(history[i].uptime_ms);
+      // Unsigned subtraction also handles the device uptime counter wrapping.
+      const ageMs=(latestTime-sampleTime)>>>0;
+      if(ageMs>HISTORY_WINDOW_MS){connected=false;return;}
+      const px=left+pw*(1-ageMs/HISTORY_WINDOW_MS);
       const py=top+(cfg.max-clamped)*ph/(cfg.max-cfg.min);
       connected?ctx.lineTo(px,py):ctx.moveTo(px,py);
       connected=true;
@@ -176,11 +183,9 @@ function drawSeries(canvasId, history, cfg){
 
   ctx.fillStyle='#607068';
   ctx.textAlign='center';
-  const secs=30*60;
-  for(let i=0;i<=4;i++){
-    const x=left+i*pw/4;
-    const t=(secs-(secs*i/4))/60;
-    ctx.fillText(i===4?'now':'-'+t.toFixed(0)+'m',x,h-8);
+  for(let minutes=HISTORY_WINDOW_MINUTES;minutes>=0;minutes-=TIME_TICK_MINUTES){
+    const x=left+pw*(1-minutes/HISTORY_WINDOW_MINUTES);
+    ctx.fillText(minutes===0?'now':'-'+minutes+'m',x,h-8);
   }
 }
 
